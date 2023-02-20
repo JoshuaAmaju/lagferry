@@ -1,0 +1,15 @@
+.controls {
+  top: 50%;
+  right: 0;
+  position: fixed;
+  margin: theme(margin.2);
+  transform: translateY(-50%);
+}
+
+.controls > * + * {
+  margin-top: theme(margin.2);
+}
+
+.control {
+  display: flex !important;
+}
