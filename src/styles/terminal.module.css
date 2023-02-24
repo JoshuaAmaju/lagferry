@@ -1,0 +1,17 @@
+.schedules {
+  background-color: white;
+  padding: theme(padding.8);
+  border-radius: theme(borderRadius.lg);
+  border: 1px solid theme(colors.gray.200);
+}
+
+.schedules > * + * {
+  margin-top: theme(space.10);
+}
+
+.crew {
+}
+
+.crew > * + * {
+  margin-left: -1rem;
+}

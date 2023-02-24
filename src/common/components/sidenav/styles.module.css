@@ -1,0 +1,7 @@
+.navItem {
+  padding: theme(padding.2) theme(padding.8);
+}
+
+.navItem__focused {
+  background-color: theme(colors.blue.500/0.7);
+}
