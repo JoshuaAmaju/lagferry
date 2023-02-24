@@ -29,6 +29,7 @@ pnpm-lock.yaml
 package-lock.json
 
 # local env files
+.env
 .env*.*
 .env*.local
 

@@ -32,7 +32,7 @@ import {
 } from "@/core/usecases/vessel";
 
 import mapboxgl from "mapbox-gl";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { inspect } from "util";
 
 import { format, formatDistanceToNow } from "date-fns";
@@ -162,12 +162,6 @@ export default function Home({ mapbox, data }: Props) {
           | TerminalFeature["properties"]["id"])
       : null;
 
-  // const [selected_feature, set_Selected_feature] = useState<
-  //   | VesselFeatureCollection["features"][0]
-  //   | TerminalFeatureCollection["features"][0]
-  //   | null
-  // >(null);
-
   const selected_feature = useMemo(() => {
     return pipe(
       data,
@@ -193,6 +187,10 @@ export default function Home({ mapbox, data }: Props) {
     );
   }, [data, _type, _selected]);
 
+  const bounds_fitted = useRef(false);
+
+  const [symbol_id, set_symbol_id] = useState<string>();
+
   const [socket] = useState(() => {
     return io(socket_url, { upgrade: true, transports: ["websocket"] });
   });
@@ -207,27 +205,7 @@ export default function Home({ mapbox, data }: Props) {
     },
   });
 
-  // const one = useQuery(
-  //   ["one"],
-  //   async () => {
-  //     const http = get_api_http();
-
-  //     const [n] = networks.data!.features;
-
-  //     console.log("one item", n);
-
-  //     const { data } = await http.get(`/network/${n.properties.id}`);
-
-  //     return data;
-  //   },
-  //   {
-  //     enabled: !!networks.data,
-  //   }
-  // );
-
-  console.log("network", networks.data, networks.error);
-
-  // console.log("network one", one.data, one.error);
+  // console.log("network", networks.data, networks.error);
 
   useEffect(() => {
     socket.on("connect", () => {
@@ -249,42 +227,44 @@ export default function Home({ mapbox, data }: Props) {
   }, [socket]);
 
   useEffect(() => {
-    if (map) {
-      const bounds = new mapboxgl.LngLatBounds();
-
+    if (map && !bounds_fitted.current) {
       pipe(
         data,
         E.match(
           () => {},
           ({ vessels }) => {
+            const bounds = new mapboxgl.LngLatBounds();
+
             vessels.features.forEach((feature) => {
               const { coordinates } = feature.geometry;
               bounds.extend(coordinates);
             });
 
             map.fitBounds(bounds, { animate: false });
+
+            bounds_fitted.current = true;
           }
         )
       );
     }
-  }, [map, data]);
+  }, [map, data, bounds_fitted]);
 
-  // useEffect(() => {
-  //   if (map) {
-  //     map.on("mouseenter", "vessel", () => {
-  //       map.getCanvas().style.cursor = "pointer";
-  //     });
+  useEffect(() => {
+    if (map) {
+      map.on("mouseenter", ["vessel-icons"], () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
 
-  //     // Change it back to a pointer when it leaves.
-  //     map.on("mouseleave", "vessel", () => {
-  //       map.getCanvas().style.cursor = "";
-  //     });
+      // Change it back to a pointer when it leaves.
+      map.on("mouseleave", ["vessel-icons"], () => {
+        map.getCanvas().style.cursor = "";
+      });
 
-  //     map.on("click", "vessel", (e) => {
-  //       map.flyTo({ center: e.features?.[0].geometry?.coordinates });
-  //     });
-  //   }
-  // }, [map, data]);
+      // map.on("click", "vessel", (e) => {
+      //   map.flyTo({ center: e.features?.[0].geometry?.coordinates });
+      // });
+    }
+  }, [map]);
 
   useEffect(() => {
     if (map) {
@@ -295,17 +275,99 @@ export default function Home({ mapbox, data }: Props) {
           O.match(
             () => {},
             ({ geometry }) => {
-              const { coordinates } = geometry;
-              const [lng, lat] = coordinates;
-              map?.flyTo({ zoom: 16, center: [lng, lat] });
+              const [lng, lat] = geometry.coordinates;
+              map.flyTo({ zoom: 16, center: [lng, lat] });
             }
           )
         )
       );
     }
-  }, [router, map, selected_feature]);
+  }, [map, selected_feature]);
 
   // console.log(data);
+
+  const vessel_img = useQuery(
+    ["vessel image"],
+    () => {
+      return new Promise<HTMLImageElement | ImageBitmap | undefined>(
+        (resolve, reject) => {
+          map!.loadImage("/ship-fill.png", (err, img) => {
+            if (err) return reject(err);
+            resolve(img);
+          });
+        }
+      );
+    },
+    {
+      enabled: map !== null,
+      refetchInterval: false,
+      onSuccess(img) {
+        if (img) map!.addImage("lag-vessel", img);
+      },
+    }
+  );
+
+  const vessel_markers = useMemo(() => {
+    return pipe(
+      data,
+      E.match(constNull, ({ vessels }) => {
+        return pipe(
+          vessels.features,
+          A.map((feature) => {
+            const { geometry } = feature;
+            const props = feature.properties;
+            const [lng, lat] = geometry.coordinates;
+
+            return (
+              <Marker
+                latitude={lat}
+                longitude={lng}
+                anchor="bottom"
+                key={props.vessel_id}
+                onClick={() => {
+                  router.push(
+                    `?type=${props.layer}&selected=${props.vessel_id}`
+                  );
+                }}
+              >
+                <ShipIcon />
+              </Marker>
+            );
+          })
+        );
+      })
+    );
+  }, [data, router]);
+
+  const terminal_markers = useMemo(() => {
+    return pipe(
+      data,
+      E.match(constNull, ({ terminals }) => {
+        return pipe(
+          terminals.features,
+          A.map((feature) => {
+            const { geometry } = feature;
+            const props = feature.properties;
+            const [lng, lat] = geometry.coordinates;
+
+            return (
+              <Marker
+                key={props.id}
+                latitude={lat}
+                longitude={lng}
+                anchor="bottom"
+                onClick={() => {
+                  router.push(`?type=${props.layer}&selected=${props.id}`);
+                }}
+              >
+                <AnchorIcon />
+              </Marker>
+            );
+          })
+        );
+      })
+    );
+  }, [data, router]);
 
   return (
     <>
@@ -319,190 +381,184 @@ export default function Home({ mapbox, data }: Props) {
       <Layout className="h-full">
         <SideNav />
 
-        <div className="flex-1 h-full">
-          {/* <header className="page-header">
-            <h1 className="page-title">User</h1>
-          </header> */}
+        <main className="flex-1 h-full">
+          {pipe(
+            mapbox.api_key,
+            O.match(
+              () => <></>,
+              (api_key) => {
+                return (
+                  <div className="h-full">
+                    <Map
+                      key="map"
+                      reuseMaps
+                      ref={set_map}
+                      mapboxAccessToken={api_key}
+                      initialViewState={initial_location}
+                      mapStyle="mapbox://styles/mapbox/streets-v9"
+                      onLoad={(e) => {
+                        const map = e.target;
 
-          <main className="h-full">
-            {pipe(
-              mapbox.api_key,
-              O.match(
-                () => <></>,
-                (api_key) => {
-                  return (
-                    <div className="h-full">
-                      <Map
-                        key="map"
-                        ref={set_map}
-                        mapboxAccessToken={api_key}
-                        initialViewState={initial_location}
-                        mapStyle="mapbox://styles/mapbox/streets-v9"
-                        onLoad={(e) => {
-                          const map = e.target;
+                        const layers = map.getStyle().layers;
+                        // Find the index of the first symbol layer in the map style.
 
-                          // pipe(
-                          //   data,
-                          //   E.match(
-                          //     () => {},
-                          //     ({ features }) => {
-                          //       features.forEach((feature) => {
-                          //         const { properties } = feature;
+                        let firstSymbolId;
 
-                          //         if (properties.image) {
-                          //           map.loadImage(
-                          //             properties.image,
-                          //             (err, img) => {
-                          //               if (img) {
-                          //                 map.addImage(properties.name, img);
-                          //               }
-                          //             }
-                          //           );
-                          //         }
-                          //       });
-                          //     }
-                          //   )
-                          // );
-                        }}
-                      >
-                        {pipe(
-                          O.fromNullable(networks.data),
-                          O.match(constNull, (data) => {
-                            return (
-                              <Source
-                                lineMetrics
-                                id="networks"
-                                type="geojson"
-                                data={data as any}
-                              >
-                                {/* <Layer
-                                    {...{
-                                      id: "point",
-                                      type: "circle",
-                                      paint: {
-                                        "circle-radius": 10,
-                                        "circle-color": "#007cbf",
-                                      },
-                                    }}
-                                  /> */}
+                        for (const layer of layers) {
+                          if (layer.type === "symbol") {
+                            firstSymbolId = layer.id;
+                            break;
+                          }
+                        }
 
-                                {/* <Layer
+                        if (firstSymbolId) {
+                          set_symbol_id(firstSymbolId);
+                        }
+
+                        // map.loadImage("/ship-fill.png", (err, img) => {
+                        //   if (img) map.addImage("vessel", img);
+                        // });
+
+                        // pipe(
+                        //   data,
+                        //   E.match(
+                        //     () => {},
+                        //     ({ features }) => {
+                        //       features.forEach((feature) => {
+                        //         const { properties } = feature;
+
+                        //         if (properties.image) {
+                        //           map.loadImage(
+                        //             properties.image,
+                        //             (err, img) => {
+                        //               if (img) {
+                        //                 map.addImage(properties.name, img);
+                        //               }
+                        //             }
+                        //           );
+                        //         }
+                        //       });
+                        //     }
+                        //   )
+                        // );
+                      }}
+                    >
+                      {pipe(
+                        O.fromNullable(networks.data),
+                        O.match(constNull, (data) => {
+                          return (
+                            <Source
+                              lineMetrics
+                              id="networks"
+                              type="geojson"
+                              key="networks"
+                              data={data as any}
+                            >
+                              {/* <Layer
                                   {...{
-                                    type: "fill",
-                                    id: "fill",
+                                    type: "line",
+                                    id: "outline",
+                                    beforeId: symbol_id,
+                                    // layout: {},
                                     paint: {
-                                      "fill-opacity": 0.5,
-                                      "fill-color": "#0080ff",
+                                      "line-width": 0.1,
+                                      "line-color": "#00000030",
                                     },
                                   }}
                                 /> */}
 
-                                <Layer
-                                  {...{
-                                    type: "line",
-                                    id: "outline",
-                                    layout: {},
-                                    paint: {
-                                      "line-width": 1,
-                                      "line-color": "#000",
-                                    },
-                                  }}
-                                />
+                              <Layer
+                                {...{
+                                  id: "colors",
+                                  type: "fill",
+                                  beforeId: symbol_id,
+                                  paint: {
+                                    "fill-opacity": 0.85,
+                                    "fill-color": [
+                                      "interpolate",
+                                      ["linear"],
+                                      ["coalesce", ["get", "mtn_upload_mb"], 0],
+                                      -1,
+                                      "black",
+                                      0.00001,
+                                      "red",
+                                      8.00001,
+                                      "yellow",
+                                      16,
+                                      "green",
+                                    ],
+                                  },
+                                }}
+                              />
+                            </Source>
+                          );
+                        })
+                      )}
 
-                                <Layer
-                                  {...{
-                                    id: "line",
-                                    type: "fill",
-                                    paint: {
-                                      "fill-color": [
-                                        "interpolate",
-                                        ["linear"],
-                                        [
-                                          "coalesce",
-                                          ["get", "mtn_upload_mb"],
-                                          0,
-                                        ],
-                                        0,
-                                        "red",
-                                        0.5,
-                                        "#EED322",
-                                        1,
-                                        "#E6B71E",
-                                        2,
-                                        "#DA9C20",
-                                        3,
-                                        "#CA8323",
-                                        4,
-                                        "orange",
-                                        5,
-                                        "#A25626",
-                                        6,
-                                        "#8B4225",
-                                        7,
-                                        "green",
-                                      ],
-                                      "fill-opacity": 0.75,
-                                    },
-                                  }}
-                                />
-                              </Source>
-                            );
-                          })
-                        )}
-
-                        {pipe(
-                          data,
-                          E.match(constNull, (data) => {
-                            return (
-                              <>
+                      {pipe(
+                        data,
+                        E.match(constNull, (data) => {
+                          return (
+                            <>
+                              {vessel_img.isSuccess ? (
                                 <Source
                                   id="vessel"
                                   type="geojson"
-                                  data={data as any}
+                                  data={data.vessels}
                                 >
                                   {/* <Layer
-                                    {...{
-                                      id: "point",
-                                      type: "circle",
-                                      paint: {
-                                        "circle-radius": 10,
-                                        "circle-color": "#007cbf",
-                                      },
-                                    }}
-                                  /> */}
+                                  type="circle"
+                                  id="vessel-point"
+                                  paint={{
+                                    "circle-radius": 15,
+                                    "circle-color": "#007cbf",
+                                  }}
+                                /> */}
 
                                   <Layer
                                     {...{
-                                      id: "icons",
                                       type: "symbol",
+                                      id: "vessel-icons",
                                       layout: {
-                                        "icon-image": ["get", "icon"],
-                                      },
-                                    }}
-                                  />
-
-                                  <Layer
-                                    {...{
-                                      id: "label",
-                                      type: "symbol",
-                                      layout: {
-                                        // "text-justify": "right",
-                                        // "text-allow-overlap": true,
-                                        "text-justify": "auto",
-                                        "text-radial-offset": 0.5,
-                                        "text-field": ["get", "name"],
-                                        "text-variable-anchor": [
-                                          "top",
-                                          "bottom",
-                                          "left",
-                                          "right",
+                                        "text-size": 14,
+                                        "text-anchor": "top",
+                                        "text-offset": [0, 0.8],
+                                        "icon-image": "lag-vessel",
+                                        "text-field": [
+                                          "to-string",
+                                          ["get", "name"],
                                         ],
                                       },
                                     }}
                                   />
-                                </Source>
 
-                                {pipe(
+                                  {/* <Layer
+                                  {...{
+                                    id: "label",
+                                    type: "symbol",
+                                    layout: {
+                                      // "text-justify": "right",
+                                      // "text-allow-overlap": true,
+                                      "text-justify": "auto",
+                                      "text-radial-offset": 0.5,
+                                      "text-field": ["get", "name"],
+                                      "text-variable-anchor": [
+                                        "top",
+                                        "bottom",
+                                        "left",
+                                        "right",
+                                      ],
+                                    },
+                                  }}
+                                /> */}
+                                </Source>
+                              ) : null}
+
+                              {/* {vessel_markers}
+
+                              {terminal_markers} */}
+
+                              {/* {pipe(
                                   data.vessels.features,
                                   A.map((f) => {
                                     const { properties: props, geometry } = f;
@@ -525,9 +581,9 @@ export default function Home({ mapbox, data }: Props) {
                                       </Marker>
                                     );
                                   })
-                                )}
+                                )} */}
 
-                                {pipe(
+                              {/* {pipe(
                                   data.terminals.features,
                                   A.map((f) => {
                                     const { properties: props, geometry } = f;
@@ -551,218 +607,208 @@ export default function Home({ mapbox, data }: Props) {
                                       </Marker>
                                     );
                                   })
-                                )}
-                              </>
-                            );
-                          })
-                        )}
-                      </Map>
+                                )} */}
+                            </>
+                          );
+                        })
+                      )}
+                    </Map>
 
-                      <div className={styles.controls}>
-                        <Popover placement="left">
-                          <PopoverTrigger>
-                            <IconButton
-                              aria-label="filter"
-                              icon={<FilterIcon />}
-                              className={styles.control}
-                            />
-                          </PopoverTrigger>
+                    <div className={styles.controls}>
+                      <Popover placement="left">
+                        <PopoverTrigger>
+                          <IconButton
+                            aria-label="filter"
+                            icon={<FilterIcon />}
+                            className={styles.control}
+                          />
+                        </PopoverTrigger>
 
-                          <PopoverContent p={5}>
-                            <FocusLock restoreFocus persistentFocus={false}>
-                              {/* <PopoverCloseButton /> */}
+                        <PopoverContent p={5}>
+                          <FocusLock restoreFocus persistentFocus={false}>
+                            {/* <PopoverCloseButton /> */}
 
-                              <figure className="p-2 bg-white rounded-md space-y-6">
-                                <figcaption className="text-lg font-semibold">
-                                  Filters
-                                </figcaption>
+                            <figure className="p-2 bg-white rounded-md space-y-6">
+                              <figcaption className="text-lg font-semibold">
+                                Filters
+                              </figcaption>
 
-                                <div>
-                                  <Accordion>
-                                    <AccordionItem defaultChecked>
-                                      <h2 className="text-lg font-medium">
-                                        <AccordionButton>
-                                          <span className="flex-1 text-left">
-                                            Symbols
-                                          </span>
-                                          <AccordionIcon />
-                                        </AccordionButton>
-                                      </h2>
+                              <div>
+                                <Accordion>
+                                  <AccordionItem defaultChecked>
+                                    <h2 className="text-lg font-medium">
+                                      <AccordionButton>
+                                        <span className="flex-1 text-left">
+                                          Symbols
+                                        </span>
+                                        <AccordionIcon />
+                                      </AccordionButton>
+                                    </h2>
 
-                                      <AccordionPanel>
-                                        <FormControl>
-                                          <FormLabel>Type</FormLabel>
+                                    <AccordionPanel>
+                                      <FormControl>
+                                        <FormLabel>Type</FormLabel>
 
-                                          <Select>
-                                            <option value="">Vessel</option>
-                                            <option value="">Terminal</option>
-                                          </Select>
-                                        </FormControl>
-                                      </AccordionPanel>
-                                    </AccordionItem>
+                                        <Select>
+                                          <option value="">Vessel</option>
+                                          <option value="">Terminal</option>
+                                        </Select>
+                                      </FormControl>
+                                    </AccordionPanel>
+                                  </AccordionItem>
 
-                                    <AccordionItem defaultChecked>
-                                      <h2 className="text-lg font-medium">
-                                        <AccordionButton>
-                                          <span className="flex-1 text-left">
-                                            Networks
-                                          </span>
-                                          <AccordionIcon />
-                                        </AccordionButton>
-                                      </h2>
+                                  <AccordionItem defaultChecked>
+                                    <h2 className="text-lg font-medium">
+                                      <AccordionButton>
+                                        <span className="flex-1 text-left">
+                                          Networks
+                                        </span>
+                                        <AccordionIcon />
+                                      </AccordionButton>
+                                    </h2>
 
-                                      <AccordionPanel>
-                                        <FormControl>
-                                          <FormLabel>Type</FormLabel>
+                                    <AccordionPanel>
+                                      <FormControl>
+                                        <FormLabel>Type</FormLabel>
 
-                                          <Select>
-                                            <option value="">Vessel</option>
-                                            <option value="">Terminal</option>
-                                          </Select>
-                                        </FormControl>
-                                      </AccordionPanel>
-                                    </AccordionItem>
-                                  </Accordion>
-                                </div>
-                              </figure>
-                            </FocusLock>
-                          </PopoverContent>
-                        </Popover>
+                                        <Select>
+                                          <option value="">Vessel</option>
+                                          <option value="">Terminal</option>
+                                        </Select>
+                                      </FormControl>
+                                    </AccordionPanel>
+                                  </AccordionItem>
+                                </Accordion>
+                              </div>
+                            </figure>
+                          </FocusLock>
+                        </PopoverContent>
+                      </Popover>
 
-                        <IconButton
-                          aria-label="Layers"
-                          icon={<StackIcon />}
-                          className={styles.control}
-                          onClick={() => {}}
-                        />
-                      </div>
+                      <IconButton
+                        aria-label="Layers"
+                        icon={<StackIcon />}
+                        className={styles.control}
+                        onClick={() => {}}
+                      />
+                    </div>
 
-                      {pipe(
-                        selected_feature as any,
-                        E.match(
-                          constNull,
-                          O.match(constNull, (feature) => {
-                            const f = feature as
-                              | VesselFeature
-                              | TerminalFeature;
+                    {pipe(
+                      selected_feature as any,
+                      E.match(
+                        constNull,
+                        O.match(constNull, (feat) => {
+                          const feature = feat as
+                            | VesselFeature
+                            | TerminalFeature;
 
-                            const { properties: props } = f;
+                          const props = feature.properties;
 
-                            return (
-                              <div
-                                key={"id" in props ? props.id : props.vessel_id}
-                                className="bg-white z-50 fixed top-0 right-0 bottom-0 m-4 w-[25rem] rounded-md overflow-hidden"
-                              >
-                                {/* eslint-disable-next-line @next/next/no-img-element */}
-                                {/* <img src={properties.image ?? ""} alt="" className="h-[10rem]" /> */}
+                          return (
+                            <div
+                              key={"id" in props ? props.id : props.vessel_id}
+                              className="bg-white z-50 fixed top-0 right-0 bottom-0 m-4 w-[25rem] rounded-md overflow-hidden"
+                            >
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              {/* <img src={properties.image ?? ""} alt="" className="h-[10rem]" /> */}
 
-                                <div className="absolute top-0 right-0 m-2">
-                                  <Button
-                                    size="xs"
-                                    onClick={() => router.push("/")}
-                                  >
-                                    close
-                                  </Button>
-                                </div>
+                              <div className="absolute top-0 right-0 m-2">
+                                <Button size="xs" onClick={router.back}>
+                                  close
+                                </Button>
+                              </div>
 
-                                <div className="flex h-full flex-col">
-                                  <div className="h-[15rem] bg-gray-500" />
+                              <div className="flex h-full flex-col">
+                                <div className="h-[15rem] bg-gray-500" />
 
-                                  <div className="p-4 space-y-6 flex-1 flex flex-col">
-                                    <div className="space-y-4 flex-1">
-                                      <div className="flex space-x-4 items-center">
-                                        <h1 className="text-2xl font-bold">
-                                          {props.name}
-                                        </h1>
+                                <div className="p-4 space-y-6 flex-1 flex flex-col">
+                                  <div className="space-y-4 flex-1">
+                                    <div className="flex space-x-4 items-center">
+                                      <h1 className="text-2xl font-bold">
+                                        {props.name}
+                                      </h1>
 
-                                        <Tag
-                                          variant="subtle"
-                                          colorScheme={
-                                            props.status === "ACTIVE"
-                                              ? "green"
-                                              : "red"
-                                          }
-                                        >
-                                          {props.status}
-                                        </Tag>
-                                      </div>
-
-                                      <div className="space-y-2">
-                                        {props.layer === "vessel" ? (
-                                          <>
-                                            <p>
-                                              <strong>
-                                                Reference Number:{" "}
-                                              </strong>
-                                              <span>
-                                                {props.reference_number}
-                                              </span>
-                                            </p>
-
-                                            <p>
-                                              <strong>Capacity: </strong>
-                                              <span>{props.capacity}</span>
-                                            </p>
-
-                                            <p>
-                                              <strong>Speed: </strong>
-                                              <span>{props.speed}</span>
-                                            </p>
-
-                                            <p>
-                                              <strong>GPS Time: </strong>
-                                              <span>
-                                                {format(
-                                                  new Date(
-                                                    props.processing_time
-                                                  ),
-                                                  "dd MMMM, yyyy"
-                                                )}
-                                              </span>
-                                            </p>
-
-                                            <p>
-                                              <strong>Received: </strong>
-                                              <span>
-                                                {formatDistanceToNow(
-                                                  new Date(
-                                                    props.processing_time
-                                                  ),
-                                                  { addSuffix: true }
-                                                )}
-                                              </span>
-                                            </p>
-                                          </>
-                                        ) : null}
-                                      </div>
+                                      <Tag
+                                        variant="subtle"
+                                        colorScheme={
+                                          props.status === "ACTIVE"
+                                            ? "green"
+                                            : "red"
+                                        }
+                                      >
+                                        {props.status}
+                                      </Tag>
                                     </div>
 
-                                    {props.layer === "vessel" ? (
-                                      <div className="sticky bottom-0">
-                                        <Button
-                                          as={Link}
-                                          colorScheme="red"
-                                          className="w-full"
-                                          href={`/playback/${props.vessel_id}`}
-                                        >
-                                          View Playback
-                                        </Button>
-                                      </div>
-                                    ) : null}
+                                    <div className="space-y-2">
+                                      {props.layer === "vessel" ? (
+                                        <>
+                                          <p>
+                                            <strong>Reference Number: </strong>
+                                            <span>
+                                              {props.reference_number}
+                                            </span>
+                                          </p>
+
+                                          <p>
+                                            <strong>Capacity: </strong>
+                                            <span>{props.capacity}</span>
+                                          </p>
+
+                                          <p>
+                                            <strong>Speed: </strong>
+                                            <span>{props.speed}</span>
+                                          </p>
+
+                                          <p>
+                                            <strong>GPS Time: </strong>
+                                            <span>
+                                              {format(
+                                                new Date(props.processing_time),
+                                                "dd MMMM, yyyy"
+                                              )}
+                                            </span>
+                                          </p>
+
+                                          <p>
+                                            <strong>Received: </strong>
+                                            <span>
+                                              {formatDistanceToNow(
+                                                new Date(props.processing_time),
+                                                { addSuffix: true }
+                                              )}
+                                            </span>
+                                          </p>
+                                        </>
+                                      ) : null}
+                                    </div>
                                   </div>
+
+                                  {props.layer === "vessel" ? (
+                                    <div className="sticky bottom-0">
+                                      <Button
+                                        as={Link}
+                                        colorScheme="red"
+                                        className="w-full"
+                                        href={`/playback/${props.vessel_id}`}
+                                      >
+                                        View Playback
+                                      </Button>
+                                    </div>
+                                  ) : null}
                                 </div>
                               </div>
-                            );
-                          })
-                        )
-                      )}
-                    </div>
-                  );
-                }
-              )
-            )}
-          </main>
-        </div>
+                            </div>
+                          );
+                        })
+                      )
+                    )}
+                  </div>
+                );
+              }
+            )
+          )}
+        </main>
       </Layout>
     </>
   );
